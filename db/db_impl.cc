@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <sstream>
 
 #include "db/builder.h"
 #include "db/db_iter.h"
@@ -34,6 +35,7 @@
 #include "util/coding.h"
 #include "util/logging.h"
 #include "util/mutexlock.h"
+
 
 namespace leveldb {
 
@@ -123,8 +125,33 @@ static int TableCacheSize(const Options& sanitized_options) {
   return sanitized_options.max_open_files - kNumNonTableCacheFiles;
 }
 
+
+//Secondary Index ToDo
+FieldDb::FieldDb(DB* kv_db, DB* index_db)
+    : kvDb(kv_db),              // 初始化 kvDb 成员变量
+      indexDb(index_db),        // 初始化 indexDb 成员变量
+      fieldWithIndex(),         // 初始化字段索引列表
+      taskQueue() {              // 初始化任务队列
+    // 如果需要在构造函数中做额外的初始化操作，可以在这里进行
+}
+
+FieldDb::~FieldDb() {
+    // 清空 taskQueue 中的所有任务
+    while (!taskQueue.empty()) {
+        taskQueue.pop();
+    }
+    // 对于 kvDb 和 indexDb，如果它们需要手动释放资源，可以在这里进行处理
+    // 注意：通常 leveldb 会负责释放它们的资源，如果不需要手动释放，可以忽略这一步
+    // 如果 kvDb 和 indexDb 是由 FieldDb 管理的并且需要释放，可以在此释放
+    // delete kvDb;  // 假设我们负责销毁 kvDb
+    // delete indexDb;  // 假设我们负责销毁 indexDb
+}
+
+//ToDo end
+
 DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
-    : env_(raw_options.env),
+    : /*Secondary Index ToDo*/ FieldDb(kvDb, indexDb),  // 调用 FieldDb 构造函数初始化 kvDb 和 indexDb /*ToDo end */
+      env_(raw_options.env),
       internal_comparator_(raw_options.comparator),
       internal_filter_policy_(raw_options.filter_policy),
       options_(SanitizeOptions(dbname, &internal_comparator_,
@@ -595,6 +622,90 @@ void DBImpl::CompactRange(const Slice* begin, const Slice* end) {
     TEST_CompactRange(level, begin, end);
   }
 }
+
+//Secondary index ToDo
+// 定义字段类型别名
+Status DBImpl::CreateIndexOnField(const std::string& fieldName) {
+  // 首先检查字段是否已经创建了索引
+  for (const auto& field : fieldWithIndex) {
+    if (field == fieldName) {
+      return Status::InvalidArgument("Index already exists for this field");
+    }
+  }
+
+  // 将索引字段添加到 fieldWithIndex 列表中
+  fieldWithIndex.push_back(fieldName);
+
+  // 在索引数据库中为字段创建索引（这只是一个简单的例子，实际的索引创建可能会更复杂）
+  std::string key = "index:" + fieldName;
+  std::string value = "index_created";
+  Status s = indexDb->Put(WriteOptions(), Slice(key), Slice(value));
+  if (!s.ok()) {
+    return s;
+  }
+
+  return Status::OK();
+}
+
+Status DBImpl::DeleteIndex(const std::string& fieldName) {
+  auto it = std::find(fieldWithIndex.begin(), fieldWithIndex.end(), fieldName);
+  if (it == fieldWithIndex.end()) {
+    return Status::NotFound("Index not found for this field");
+  }
+
+  // 从列表中移除该字段
+  fieldWithIndex.erase(it);
+
+  // 删除索引数据库中的条目
+  std::string key = "index:" + fieldName;
+  Status s = indexDb->Delete(WriteOptions(), Slice(key));
+  if (!s.ok()) {
+    return s;
+  }
+
+  return Status::OK();
+}
+
+Status DBImpl::QueryByIndex(const std::string& fieldName, std::vector<std::string>* results) {
+  // 检查该字段是否有索引
+  auto it = std::find(fieldWithIndex.begin(), fieldWithIndex.end(), fieldName);
+  if (it == fieldWithIndex.end()) {
+    return Status::NotFound("No index found for this field");
+  }
+
+  // 执行查询操作（这是一个简单的查询方法，实际应用中可能会更复杂）
+  std::string key = "index:" + fieldName;
+  std::string value;
+  Status s = indexDb->Get(ReadOptions(), Slice(key), &value);
+  if (!s.ok()) {
+    return s;
+  }
+
+  // 假设我们通过值可以获取到索引的内容，添加到结果列表中
+  results->push_back(value);  // 这里可以根据实际需求来处理查询结果
+
+  return Status::OK();
+}
+
+Status DBImpl::EncodeIndexKey(const std::string& fieldName, const std::string& key, std::string* encodedKey) {
+  // 简单的编码示例，可以根据需求修改
+  *encodedKey = fieldName + ":" + key;
+  return Status::OK();
+}
+
+Status DBImpl::DecodeIndexKey(const std::string& encodedKey, std::string* fieldName, std::string* originalKey) {
+  size_t pos = encodedKey.find(':');
+  if (pos == std::string::npos) {
+    return Status::InvalidArgument("Invalid encoded key");
+  }
+
+  *fieldName = encodedKey.substr(0, pos);
+  *originalKey = encodedKey.substr(pos + 1);
+  return Status::OK();
+}
+
+
+// ToDo end
 
 void DBImpl::TEST_CompactRange(int level, const Slice* begin,
                                const Slice* end) {
@@ -1541,6 +1652,7 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   }
   return s;
 }
+
 
 Snapshot::~Snapshot() = default;
 

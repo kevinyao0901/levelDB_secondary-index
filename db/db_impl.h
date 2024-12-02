@@ -9,6 +9,7 @@
 #include <deque>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "db/dbformat.h"
 #include "db/log_writer.h"
@@ -26,7 +27,7 @@ class Version;
 class VersionEdit;
 class VersionSet;
 
-class DBImpl : public DB {
+class DBImpl : /*Secondary Index ToDo*/ public DB  , public FieldDb/*ToDo end*/{
  public:
   DBImpl(const Options& options, const std::string& dbname);
 
@@ -50,6 +51,14 @@ class DBImpl : public DB {
   void CompactRange(const Slice* begin, const Slice* end) override;
 
   // Extra methods (for testing) that are not in the public DB interface
+
+  //Secondary Index ToDo
+  // 重写 FieldDb 中的索引相关方法
+  Status CreateIndexOnField(const std::string& fieldName) override;
+  Status DeleteIndex(const std::string& fieldName) override;
+  Status QueryByIndex(const std::string& fieldName, std::vector<std::string>* results) override;
+  //ToDo end
+
 
   // Compact any files in the named level that overlap [*begin,*end]
   void TEST_CompactRange(int level, const Slice* begin, const Slice* end);
@@ -155,6 +164,14 @@ class DBImpl : public DB {
     return internal_comparator_.user_comparator();
   }
 
+  //Secondary Index ToDo
+  // 为 FieldDb 定义的成员变量
+  DB* kvDb;      // 原始数据库（键值存储）
+  DB* indexDb;   // 索引数据库（二级索引）
+  std::vector<std::string> fieldWithIndex; // 存储已经索引的字段
+  std::queue<std::pair<bool, std::string>> taskQueue;
+  //ToDo end
+
   // Constant after construction
   Env* const env_;
   const InternalKeyComparator internal_comparator_;
@@ -203,7 +220,16 @@ class DBImpl : public DB {
   Status bg_error_ GUARDED_BY(mutex_);
 
   CompactionStats stats_[config::kNumLevels] GUARDED_BY(mutex_);
+
+  //Secondary Index ToDo
+  // Helper methods to interact with the underlying database
+  Status EncodeIndexKey(const std::string& fieldName, const std::string& key, std::string* encodedKey);
+  Status DecodeIndexKey(const std::string& encodedKey, std::string* fieldName, std::string* originalKey);
+  //ToDo end
 };
+
+
+
 
 // Sanitize db options.  The caller should delete result.info_log if
 // it is not equal to src.info_log.

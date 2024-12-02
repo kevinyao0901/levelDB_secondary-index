@@ -7,6 +7,8 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <vector>
+#include <queue>
 
 #include "leveldb/export.h"
 #include "leveldb/iterator.h"
@@ -145,12 +147,52 @@ class LEVELDB_EXPORT DB {
   // Therefore the following call will compact the entire database:
   //    db->CompactRange(nullptr, nullptr);
   virtual void CompactRange(const Slice* begin, const Slice* end) = 0;
-
-  // ----------------------------For TTL-----------------------------
-  // 为当前key设置ttl，过期后自动失效
-  virtual Status Put(const WriteOptions& options, const Slice& key,
-                     const Slice& value, uint64_t ttl) = 0;
 };
+
+// Secondary index ToDo
+// Definition of the FieldDb class to manage kvDb and indexDb
+class LEVELDB_EXPORT FieldDb {
+ public:
+  FieldDb(DB* kv_db, DB* index_db);
+  virtual ~FieldDb();
+
+  // 静态 Open 函数声明
+  static Status Open(const Options& options, const std::string& dbname, FieldDb** field_db);
+
+  // Add an index on the specified field
+  virtual Status CreateIndexOnField(const std::string& fieldName) = 0;
+
+  // Remove an index on the specified field
+  virtual Status DeleteIndex(const std::string& fieldName) = 0;
+
+  // Query the database using an index
+  virtual Status QueryByIndex(const std::string& fieldName, std::vector<std::string>* results) = 0;
+
+  virtual Status Put(const WriteOptions& options, const Slice& key,
+                     const Slice& value) = 0;
+  virtual Status Delete(const WriteOptions& options, const Slice& key) = 0;
+  virtual Status Write(const WriteOptions& options, WriteBatch* updates) = 0;
+  virtual Status Get(const ReadOptions& options, const Slice& key,
+                     std::string* value) = 0;
+  virtual Iterator* NewIterator(const ReadOptions& options) = 0;
+  virtual const Snapshot* GetSnapshot() = 0;
+  virtual void ReleaseSnapshot(const Snapshot* snapshot) = 0;
+  virtual bool GetProperty(const Slice& property, std::string* value) = 0;
+  virtual void GetApproximateSizes(const Range* range, int n,
+                                   uint64_t* sizes) = 0;
+  virtual void CompactRange(const Slice* begin, const Slice* end) = 0;
+
+ private:
+  // Helper methods
+  virtual Status EncodeIndexKey(const std::string& fieldName, const std::string& key, std::string* encodedKey) = 0;
+  virtual Status DecodeIndexKey(const std::string& encodedKey, std::string* fieldName, std::string* originalKey) = 0;
+
+  DB* kvDb;      // Original database (key-value store)
+  DB* indexDb;   // Index database (secondary index)
+  std::vector<std::string> fieldWithIndex; // List of fields with indexes
+  std::queue<std::pair<bool, std::string>> taskQueue;
+};
+// ToDo end
 
 // Destroy the contents of the specified database.
 // Be very careful using this method.
